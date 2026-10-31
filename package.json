@@ -1,5 +1,5 @@
 {
-  "name": "dsh-token-usage",
+  "name": "@zhangyongshuai56-hub/dsh-token-usage",
   "version": "0.1.0",
   "description": "统计 DSH 每日消耗的 Tokens，按模型分系列展示趋势与日历热力图",
   "license": "MIT",
@@ -53,5 +53,8 @@
     "token-usage",
     "analytics",
     "dashboard"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }

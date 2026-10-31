@@ -4,11 +4,13 @@
 
 ## 安装
 
-插件已发布到 GitHub，DSH 插件市场可直接从仓库地址安装：
+从 GitHub 仓库地址安装（市场里也可直接搜包名）：
 
 ```
 https://github.com/zhangyongshuai56-hub/dsh-token-usage
 ```
+
+npm 包名是 `@zhangyongshuai56-hub/dsh-token-usage`（`dsh-token-usage` 已被他人占用，故加 scope）。
 
 也可以本地软链开发（见文末「开发」）。安装后在设置里打开「Token 用量」面板即可。
 
