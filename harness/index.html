@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dsh-token-usage client harness</title>
+<style>
+  body{margin:0;padding:20px;background:#fff;color:#18181b;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+  /* 深色预览必须换整套宿主令牌：只换 body 背景会让 --dsw-alias-label-primary
+     仍是浅色主题的 #18181b —— 文字直接消失在深底上（实测截图全黑） */
+  body.dark{
+    background:#121316;color:#e8eaee;
+    --dsw-alias-bg-base:#121316;--dsw-alias-bg-layer-1:#17181c;--dsw-alias-bg-layer-2:#1d1f24;
+    --dsw-alias-border-l1:#2a2d33;--dsw-alias-border-l2:#3a3e46;
+    --dsw-alias-label-primary:#e8eaee;--dsw-alias-label-secondary:#b6bcc6;--dsw-alias-label-tertiary:#8b919b;
+    --dsw-alias-interactive-bg-hover:rgba(255,255,255,.08);
+    --dsw-alias-button-elevated-fill:rgba(255,255,255,.06);
+    --dsw-alias-button-primary-fill:#2563eb;--dsw-static-deepseek-450:#7ea6ff;
+    --dsw-shadow-lv3:0 8px 24px rgba(0,0,0,.5);
+  }
+  /* 模拟宿主的浅色 token */
+  :root{
+    --dsw-alias-bg-base:#ffffff;--dsw-alias-bg-layer-1:#ffffff;--dsw-alias-bg-layer-2:#fdfdfd;
+    --dsw-alias-border-l1:#e0e2e6;--dsw-alias-border-l2:#d0d3d8;
+    --dsw-alias-label-primary:#18181b;--dsw-alias-label-secondary:#52525b;--dsw-alias-label-tertiary:#8a8f98;
+    --dsw-alias-interactive-bg-hover:rgba(0,0,0,.05);--dsw-alias-button-elevated-fill:rgba(0,0,0,.04);
+    --dsw-alias-button-primary-fill:#3b82f6;--dsw-static-deepseek-450:#3b82f6;
+    --dsw-radius-lg:18px;--dsw-shadow-lv3:0 8px 24px rgba(0,0,0,.14);
+    --dsw-font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;
+  }
+  #mount{max-width:1100px;margin:0 auto}
+</style>
+</head>
+<body>
+<div id="mount"></div>
+<script>
+/* ── 迷你 React：够跑 createElement / useRef / useEffect ── */
+const effects = []
+function h(type, props, ...children) {
+  return { type, props: props || {}, children: children.flat() }
+}
+const React = {
+  createElement: h,
+  useRef: (init) => ({ current: init }),
+  useEffect: (fn) => { effects.push(fn) },
+}
+
+/* ── 假 fetch：返回真实聚合数据 ── */
+const realFetch = window.fetch.bind(window)
+window.fetch = async () => {
+  const res = await realFetch('./payload.json')
+  return { ok: res.ok, status: res.status, json: () => res.json() }
+}
+
+/* ── 假模块加载器：捕获 apply(ctx) 注册的设置页组件 ── */
+let registered = null
+window.__ModuleLoader__ = {
+  load(spec) {
+    const factory = spec.factory((name) => {
+      if (name === 'react') return React
+      throw new Error('unexpected require: ' + name)
+    })
+    window.__moduleExports = factory
+  },
+}
+
+function mountElement(element, container) {
+  if (typeof element === 'string') { container.append(document.createTextNode(element)); return }
+  if (element === null || element === undefined) return
+  const el = document.createElement(element.type)
+  for (const [key, value] of Object.entries(element.props)) {
+    if (key === 'ref') { if (value) value.current = el; continue }
+    if (key === 'children') continue
+    if (key === 'style') { Object.assign(el.style, value); continue }
+    el.setAttribute(key, value)
+  }
+  for (const child of element.children) mountElement(child, el)
+  container.append(el)
+}
+
+if (new URLSearchParams(location.search).get('dark') === '1') document.body.classList.add('dark')
+window.addEventListener('DOMContentLoaded', () => {
+  const exports = window.__moduleExports
+  if (!exports) { document.getElementById('mount').textContent = '模块未加载'; return }
+  // 插件现在注册两个插槽：sidebar.panellist（图标）与 main（中央面板）
+  const registrations = {}
+  const fakeCtx = {
+    slots: {
+      inject(name, fn) {
+        const result = fn()
+        if (result && result.name) registrations[result.name] = result
+      },
+      register(descriptor, component) {
+        const entry = { options: descriptor, component }
+        registrations[descriptor.name] = entry
+        return entry
+      },
+    },
+  }
+  exports.apply(fakeCtx)
+  window.__registrations = registrations
+  const mount = document.getElementById('mount')
+  const main = registrations.main
+  if (!main) { document.getElementById('mount').textContent = '未注册 main 面板'; return }
+  const tree = main.component()
+  mountElement(tree, mount)
+  for (const effect of effects) effect()
+  window.__harnessReady = true
+  // 合成悬停：验证插件版 tooltip 的定位
+  setTimeout(() => {
+    const hit = document.querySelector('#dsh-tu-hit')
+    if (hit) {
+      const r = hit.getBoundingClientRect()
+      hit.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + r.width * 0.9, clientY: r.top + r.height * 0.5 }))
+    }
+  }, 500)
+})
+</script>
+<script src="./client.js"></script>
+</body>
+</html>

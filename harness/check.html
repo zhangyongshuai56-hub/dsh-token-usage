@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>热力图口径校验</title>
+<style>
+  body{margin:0;padding:24px;background:#fff;color:#18181b;font:13px/1.7 -apple-system,"PingFang SC",sans-serif}
+  pre{font:12px/1.6 ui-monospace,Menlo,monospace;background:#f4f4f5;padding:14px;border-radius:10px}
+  #mount{position:absolute;left:-9999px;top:0}
+</style>
+</head>
+<body>
+<pre id="out">running…</pre>
+<div id="mount"></div>
+<script>
+/* 迷你 React */
+const effects = []
+function h(type, props, ...children) { return { type, props: props || {}, children: children.flat() } }
+const React = { createElement: h, useRef: (v) => ({ current: v }), useEffect: (fn) => { effects.push(fn) } }
+const realFetch = window.fetch.bind(window)
+window.fetch = async () => { const r = await realFetch('./payload.json'); return { ok: r.ok, status: r.status, json: () => r.json() } }
+let registered = null
+window.__ModuleLoader__ = {
+  load(spec) {
+    window.__moduleExports = spec.factory((name) => { if (name === 'react') return React; throw new Error(name) })
+  },
+}
+function mountElement(el, c) {
+  if (typeof el === 'string') { c.append(document.createTextNode(el)); return }
+  if (!el) return
+  const d = document.createElement(el.type)
+  for (const [k, v] of Object.entries(el.props)) {
+    if (k === 'ref') { if (v) v.current = d; continue }
+    if (k === 'children') continue
+    if (k === 'style') { Object.assign(d.style, v); continue }
+    d.setAttribute(k, v)
+  }
+  for (const ch of el.children) mountElement(ch, d)
+  c.append(d)
+}
+const out = document.getElementById('out')
+const lines = []
+window.addEventListener('DOMContentLoaded', async () => {
+  const exports = window.__moduleExports
+  const fakeCtx = {
+    slots: {
+      inject(n, fn) { registered = fn() },
+      register(d, comp) { window.__reg = { d, comp }; return { id: d.id } },
+    },
+  }
+  exports.apply(fakeCtx)
+  const mount = document.getElementById('mount')
+  mountElement(window.__reg.comp(), mount)
+  for (const e of effects) e()
+  await new Promise((r) => setTimeout(r, 700))
+
+  const modes = [['day', '每日'], ['week', '每周'], ['cum', '累计']]
+  for (const [mode, label] of modes) {
+    document.querySelector(`[data-m="${mode}"]`).click()
+    await new Promise((r) => setTimeout(r, 350))
+    const cells = [...document.querySelectorAll('#mount rect.cell')]
+    const gray = cells.filter((c) => c.getAttribute('fill') === 'currentColor').length
+    const blue = cells.length - gray
+    // 蓝格按不透明度分档
+    const lv = [0.32, 0.55, 0.8, 1].map((o) => cells.filter((c) => c.getAttribute('fill-opacity') === String(o)).length)
+    // 逐格明细：有数据的格子 → 日期 + 档位
+    const detail = cells.filter((c) => c.getAttribute('fill') !== 'currentColor')
+      .map((c) => `${c.getAttribute('data-day')}[列${c.getAttribute('data-column')}行${c.getAttribute('data-row')}]=${(Number(c.getAttribute('data-value'))/1e6).toFixed(1)}M/${c.getAttribute('fill-opacity')}`)
+    lines.push(`   蓝格明细：${detail.join('  ')}`)
+    // 有会话的天数
+    const payload = await (await realFetch('./payload.json')).json()
+    const days = Object.keys(payload.days).length
+    lines.push(`${label}：总格子 ${cells.length}｜灰格(无会话) ${gray}｜蓝格(有数据) ${blue}｜蓝格分档 ${JSON.stringify(lv)}｜真实有记录天数 ${days}`)
+    lines.push(`   判定：${gray === cells.length - days ? '✅ 灰格数正好等于「格子数 − 有记录天数」' : '❌ 灰格数与有记录天数对不上'}`)
+  }
+  // tooltip 随口径检查
+  for (const [mode, label] of modes) {
+    document.querySelector(`[data-m="${mode}"]`).click()
+    await new Promise((r) => setTimeout(r, 350))
+    const cell = document.querySelector('#mount rect.cell[data-day="2026-10-20"]')
+    if (cell) {
+      const r = cell.getBoundingClientRect()
+      cell.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: r.left + 5, clientY: r.top + 5 }))
+      await new Promise((res) => setTimeout(res, 200))
+      const tip = document.querySelector('#mount .dsh-tu-tip')
+      lines.push(`   ${label} tooltip(10-20)：${tip ? tip.textContent.replace(/\s+/g, ' ').trim() : '(无)'}`)
+    }
+  }
+  out.textContent = lines.join('\n')
+  window.__done = true
+})
+</script>
+<script src="./client.js"></script>
+</body>
+</html>

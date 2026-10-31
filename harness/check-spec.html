@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>热力图三口径规格校验</title>
+<style>
+  body{margin:0;padding:24px;background:#fff;color:#18181b;font:13px/1.8 -apple-system,"PingFang SC",sans-serif}
+  pre{font:12.5px/1.75 ui-monospace,Menlo,monospace;background:#f4f4f5;padding:16px;border-radius:10px;white-space:pre-wrap}
+  #mount{position:absolute;left:-9999px;top:0}
+</style>
+</head>
+<body>
+<pre id="out">running…</pre>
+<div id="mount"></div>
+<script>
+const effects = []
+function h(type, props, ...children) { return { type, props: props || {}, children: children.flat() } }
+const React = { createElement: h, useRef: (v) => ({ current: v }), useEffect: (fn) => { effects.push(fn) } }
+const realFetch = window.fetch.bind(window)
+window.fetch = async () => { const r = await realFetch('./payload.json'); return { ok: r.ok, status: r.status, json: () => r.json() } }
+window.__ModuleLoader__ = {
+  load(spec) { window.__moduleExports = spec.factory((name) => { if (name === 'react') return React; throw new Error(name) }) },
+}
+function mountElement(el, c) {
+  if (typeof el === 'string') { c.append(document.createTextNode(el)); return }
+  if (!el) return
+  const d = document.createElement(el.type)
+  for (const [k, v] of Object.entries(el.props)) {
+    if (k === 'ref') { if (v) v.current = d; continue }
+    if (k === 'children') continue
+    if (k === 'style') { Object.assign(d.style, v); continue }
+    d.setAttribute(k, v)
+  }
+  for (const ch of el.children) mountElement(ch, d)
+  c.append(d)
+}
+const out = document.getElementById('out')
+const L = []
+const ok = (cond, text) => L.push(`   ${cond ? '✅' : '❌'} ${text}`)
+
+window.addEventListener('DOMContentLoaded', async () => {
+  const exports = window.__moduleExports
+  const registrations = {}
+  exports.apply({
+    slots: {
+      inject(n, fn) { const r = fn(); if (r && r.name) registrations[r.name] = r },
+      register(d, comp) { const e = { options: d, component: comp }; registrations[d.name] = e; return e },
+    },
+  })
+  window.__registrations = registrations
+  mountElement(registrations.main.component(), document.getElementById('mount'))
+  for (const e of effects) e()
+  await new Promise((r) => setTimeout(r, 800))
+  const payload = await (await realFetch('./payload.json')).json()
+  const days = Object.keys(payload.days).sort()
+
+  for (const [mode, label] of [['day', '每日'], ['week', '每周'], ['cum', '累计']]) {
+    document.querySelector(`[data-m="${mode}"]`).click()
+    await new Promise((r) => setTimeout(r, 400))
+    L.push(`\n【${label}】`)
+    const cells = [...document.querySelectorAll('#mount rect.cell')]
+    const blue = cells.filter((c) => c.getAttribute('fill') !== 'currentColor')
+    const gray = cells.length - blue.length
+
+    // ── 期望值按"今天"动态算，自检页不会因为跨天而失效 ──
+    const fmtKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const todayDate = new Date(); todayDate.setHours(12, 0, 0, 0)
+    const todayKey = fmtKey(todayDate)
+    const mondayOf = (key) => {
+      const d = new Date(`${key}T12:00:00`)
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+      return fmtKey(d)
+    }
+    if (mode === 'day') {
+      ok(blue.length === days.length, `着色格子 ${blue.length} 个 == 有记录天数 ${days.length}`)
+    }
+    if (mode === 'week') {
+      // 每个有记录的周，从周一起到 min(周末, 今天) 的天数都着色
+      const weeks = new Map()
+      for (const day of days) {
+        const mk = mondayOf(day)
+        weeks.set(mk, (weeks.get(mk) || 0) + 1)
+      }
+      let expect = 0
+      for (const [mk, hasDays] of weeks) {
+        const end = new Date(`${mk}T12:00:00`); end.setDate(end.getDate() + 6)
+        const stop = end < todayDate ? end : todayDate
+        const start = new Date(`${mk}T12:00:00`)
+        expect += Math.round((stop - start) / 86400000) + 1
+      }
+      ok(blue.length === expect, `着色格子 ${blue.length} 个 == 有记录的周从周一起到今天的格子总数 ${expect}`)
+      // 同一周内颜色一致
+      const byWeek = new Map()
+      for (const c of blue) {
+        const col = Math.round(Number(c.getAttribute('x')) / 30)
+        if (!byWeek.has(col)) byWeek.set(col, new Set())
+        byWeek.get(col).add(c.getAttribute('fill-opacity'))
+      }
+      let same = true
+      for (const ops of byWeek.values()) if (ops.size !== 1) same = false
+      ok(same, '每一周内的格子颜色一致')
+    }
+    if (mode === 'cum') {
+      const span = Math.round((todayDate - new Date(`${days[0]}T12:00:00`)) / 86400000) + 1
+      ok(blue.length === span, `着色格子 ${blue.length} 个 == 统计起始 ${days[0]} 至今天共 ${span} 天（含消耗为 0 的日子）`)
+    }
+    ok(gray > 0, `无会话的格子为灰色 ${gray} 个`)
+
+    // 悬浮文案
+    const cell = document.querySelector('#mount rect.cell[data-day="2026-10-20"]')
+    const r = cell.getBoundingClientRect()
+    cell.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: r.left + 5, clientY: r.top + 5 }))
+    await new Promise((res) => setTimeout(res, 150))
+    const tipText = document.querySelector('#mount .dsh-tu-tip').textContent.replace(/\s+/g, ' ').trim()
+    L.push(`   悬浮(10-20)：${tipText}`)
+    const expect = {
+      day: /^2026年10月20日，消耗 [\d.]+ [亿万]? Tokens$/,
+      week: /^2026年10月20日所在周，本周消耗 [\d.]+ [亿万]? Tokens$/,
+      cum: /^截至2026年10月20日，累计消耗 [\d.]+ [亿万]? Tokens$/,
+    }[mode]
+    ok(expect.test(tipText), '悬浮文案符合规格')
+
+
+  }
+  out.textContent = L.join('\n')
+})
+</script>
+<script src="./client.js"></script>
+</body>
+</html>

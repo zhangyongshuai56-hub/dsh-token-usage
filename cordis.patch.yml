@@ -1,0 +1,9 @@
+# Bundle patch for dsh-token-usage.
+#
+# The row below mounts the plugin as a profile layer; the package's
+# `dsh.client` block (package.json) is what gets the browser half served
+# and loaded. Both blocks are required — a package that declares only
+# `dsh.client` is not installable.
+- insert:
+    - id: token-usage
+      name: dsh-token-usage
